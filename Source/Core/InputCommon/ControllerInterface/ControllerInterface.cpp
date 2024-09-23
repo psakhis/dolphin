@@ -36,6 +36,9 @@
 #ifdef CIFACE_USE_STEAMDECK
 #include "InputCommon/ControllerInterface/SteamDeck/SteamDeck.h"
 #endif
+#ifdef CIFACE_USE_MISTER
+#include "InputCommon/ControllerInterface/MisterInput/MisterInput.h"
+#endif
 
 ControllerInterface g_controller_interface;
 
@@ -84,6 +87,10 @@ void ControllerInterface::Initialize(const WindowSystemInfo& wsi)
 #endif
 #ifdef CIFACE_USE_STEAMDECK
   m_input_backends.emplace_back(ciface::SteamDeck::CreateInputBackend(this));
+#endif
+#ifdef CIFACE_USE_MISTER
+  //m_input_backends.emplace_back(ciface::MisterInput::CreateInputBackend(this));
+  ciface::MisterInput::Init();
 #endif
 
   // Don't allow backends to add devices before the first RefreshDevices() as they will be cleaned
@@ -157,6 +164,10 @@ void ControllerInterface::RefreshDevices(RefreshReason reason)
   // do it async, to not risk the emulated controllers default config loading not finding a default
   // device.
 
+#ifdef CIFACE_USE_MISTER
+  ciface::MisterInput::PopulateDevices(); 
+#endif
+
   for (auto& backend : m_input_backends)
     backend->PopulateDevices();
 
@@ -194,6 +205,10 @@ void ControllerInterface::Shutdown()
 
   // Update control references so shared_ptr<Device>s are freed up BEFORE we shutdown the backends.
   ClearDevices();
+
+#ifdef CIFACE_USE_MISTER
+  ciface::MisterInput::DeInit();
+#endif  
 
   // Empty the container of input backends to deconstruct and deinitialize them.
   m_input_backends.clear();

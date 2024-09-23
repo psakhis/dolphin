@@ -22,6 +22,7 @@
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/VideoEvents.h"
 #include "VideoCommon/Widescreen.h"
+#include <Core/Core.h>
 
 std::unique_ptr<VideoCommon::Presenter> g_presenter;
 
@@ -96,12 +97,29 @@ Presenter::Presenter()
 {
   m_config_changed =
       ConfigChangedEvent::Register([this](u32 bits) { ConfigChanged(bits); }, "Presenter");
+
+  if (Config::Get(Config::GFX_GROOVY_ENABLE) && !g_mister.isConnected())
+  {
+    std::string ip = Config::Get(Config::GFX_GROOVY_IP);
+    NOTICE_LOG_FMT(VIDEO, "GroovyMiSTer Init ip {} lz4 {} dela {} jumbo {}", ip.c_str(),
+                   Config::Get(Config::GFX_GROOVY_LZ4),
+                   Config::Get(Config::GFX_GROOVY_LZ4_DELTA), Config::Get(Config::GFX_GROOVY_JUMBO));
+    int lz4 = (Config::Get(Config::GFX_GROOVY_LZ4) && Config::Get(Config::GFX_GROOVY_LZ4_DELTA)) ? 2 : Config::Get(Config::GFX_GROOVY_LZ4);
+    g_mister.Init(ip.c_str(), 32100, lz4, 48000, 2, 0, Config::Get(Config::GFX_GROOVY_JUMBO) ? 3800 : 1500);
+    g_mister.setDeltaFrames(Config::Get(Config::GFX_GROOVY_LZ4_DELTA));
+  }      
 }
 
 Presenter::~Presenter()
 {
   // Disable ControllerInterface's aspect ratio adjustments so mapping dialog behaves normally.
   g_controller_interface.SetAspectRatioAdjustment(1);
+  
+  if (Config::Get(Config::GFX_GROOVY_ENABLE) && g_mister.isConnected())
+  {
+    NOTICE_LOG_FMT(VIDEO, "GroovyMiSTer Close");
+    g_mister.Close();   
+  }
 }
 
 bool Presenter::Initialize()
@@ -854,6 +872,184 @@ void Presenter::Present()
     auto render_source_rc = m_xfb_rect;
     AdjustRectanglesToFitBounds(&render_target_rc, &render_source_rc, m_backbuffer_width,
                                 m_backbuffer_height);
+
+    // GroovyMister
+    if (Config::Get(Config::GFX_GROOVY_ENABLE) && g_mister.isConnected())
+    {      
+      // Check resolution
+      {
+        auto mode = Config::Get(Config::GFX_GROOVY_VIDEO_MODE);
+        u32 res_w = m_xfb_rect.GetWidth();
+        u32 res_h = m_xfb_rect.GetHeight();
+        double refresh = Core::System::GetInstance().GetVideoInterface().GetTargetRefreshRate();
+        uint8_t video_mode = mode == Config::GroovyVideoMode::GV_15KHZ      ? 0 :
+                             mode == Config::GroovyVideoMode::GV_15KHZ_240P ? 1 :
+                             mode == Config::GroovyVideoMode::GV_NTSC       ? 2 :
+                                                                              3;
+        if (g_mister.getMode() != video_mode)
+        {
+          NOTICE_LOG_FMT(VIDEO, "GroovyMiSTer video_mode changed from {} to {}, switchres {}x{}@{}", g_mister.getMode(), video_mode, res_w, res_h, refresh);
+          g_mister.Switchres(video_mode, res_w, res_h, refresh, Config::Get(Config::GFX_GROOVY_PROG_FB));
+        }
+        if (res_w == g_mister.getWidth() && g_mister.getRealHeight() > 0 &&
+            g_mister.getRealHeight() <= 240 && res_h > g_mister.getRealHeight() && video_mode == 1)
+        {
+        }  // 240p forced
+        else if (res_w != g_mister.getWidth() || res_h != g_mister.getHeight() || (refresh < 55 && !g_mister.isPAL()) || (refresh > 55 && g_mister.isPAL()))
+        {
+          NOTICE_LOG_FMT(VIDEO, "GroovyMiSTer video_mode {} switchres {}x{}@{}", video_mode, res_w, res_h, refresh);
+          g_mister.Switchres(video_mode, res_w, res_h, refresh, Config::Get(Config::GFX_GROOVY_PROG_FB));
+        }       
+
+        // Scale or render fb as is
+        bool do_scaling = false;
+        // Check/create readback texture
+        {
+          u32 width = m_xfb_rect.GetWidth();
+          u32 height = m_xfb_rect.GetHeight();
+
+          u32 real_height =
+              g_mister.getMode() == 1 ? g_mister.getRealHeight() * 2 : g_mister.getRealHeight();
+
+          if (Config::Get(Config::GFX_GROOVY_SCALE) &&
+              (width != g_mister.getRealWidth() || height != real_height) &&
+              g_mister.getRealWidth() && g_mister.getRealHeight())
+          {
+            do_scaling = true;
+            width = g_mister.getRealWidth();
+            height = g_mister.getRealHeight();
+
+            // Check/create scaled texture
+            std::unique_ptr<AbstractTexture>& scaletex = m_mister_scaling_texture;
+            if (!scaletex || scaletex->GetWidth() != width || scaletex->GetHeight() != height)
+            {
+              m_mister_scaling_framebuffer.reset();
+              scaletex.reset();
+              scaletex = g_gfx->CreateTexture(TextureConfig(width, height, 1, 1, 1,
+                                                            AbstractTextureFormat::RGBA8,
+                                                            AbstractTextureFlag_RenderTarget,
+                                                            AbstractTextureType::Texture_2DArray),
+                                              "Mister scaling render texture");
+
+              m_mister_scaling_framebuffer =
+                  g_gfx->CreateFramebuffer(m_mister_scaling_texture.get(), nullptr);
+            }
+          }
+
+          std::unique_ptr<AbstractStagingTexture>& rbtex = m_mister_readback_texture;
+          if (!rbtex || rbtex->GetWidth() != width || rbtex->GetHeight() != height)
+          {
+            NOTICE_LOG_FMT(VIDEO, "GroovyMiSTer rtbtex {}x{}", width, height);
+            rbtex.reset();
+            rbtex = g_gfx->CreateStagingTexture(
+                StagingTextureType::Readback,
+                TextureConfig(width, height, 1, 1, 1, AbstractTextureFormat::RGBA8, 0,
+                              AbstractTextureType::Texture_2DArray));
+          }
+        }
+
+        // Copy render texture, scaling if needed
+        if (do_scaling)
+        {
+          auto current_fb = g_gfx->GetCurrentFramebuffer();
+          g_gfx->ScaleTexture(m_mister_scaling_framebuffer.get(),
+                              m_mister_scaling_framebuffer->GetRect(), m_xfb_entry->texture.get(),
+                              m_xfb_rect);
+          m_mister_readback_texture->CopyFromTexture(m_mister_scaling_texture.get(),
+                                                     m_mister_scaling_texture->GetRect(), 0, 0,
+                                                     m_mister_readback_texture->GetRect());
+          g_gfx->SetFramebuffer(current_fb);
+        }
+        else
+        {
+          m_mister_readback_texture->CopyFromTexture(m_xfb_entry->texture.get(), m_xfb_rect, 0, 0,
+                                                     m_mister_readback_texture->GetRect());
+        }
+
+        // We have the texture, now dump it to bytes.
+        auto& output = m_mister_readback_texture;
+        output->Flush();
+        if (output->Map())
+        {
+          u8* bytes = reinterpret_cast<u8*>(output->GetMappedPointer());
+          int w = output->GetConfig().width;
+          int h = output->GetConfig().height;
+          int stride = static_cast<int>(output->GetMappedStride());    
+          // Dump to MiSTer progressive buffer
+          char* tmp_buffer = g_mister.m_texture_bytes;          
+          if (!Config::Get(Config::GFX_GROOVY_LZ4_DELTA) && !g_mister.isInterlaced())
+            tmp_buffer = g_mister.getPBufferBlit();
+         
+         // int matchDelta = 0;
+         // uint8_t* tmp_buffer_delta = (uint8_t*)g_mister.getPBufferBlitDelta();
+          int c = 0;
+          int offset_xres = g_mister.getRealWidth() - w;                             
+          for (int y = 0; y < h; y++)
+          {
+            const u8* pos = bytes + y * stride;
+            for (int x = 0; x < w; x++)
+            {
+              int r = pos[x * 4];
+              int g = pos[x * 4 + 1];
+              int b = pos[x * 4 + 2];
+              /* if (Config::Get(Config::GFX_GROOVY_LZ4_DELTA) && !g_mister.isInterlaced())
+              {
+                if (b == tmp_buffer[c + 0])
+                {
+                  matchDelta++;
+                  tmp_buffer_delta[c + 0] = 0x00;
+                }
+                else
+                {
+                  tmp_buffer_delta[c + 0] = (uint8_t) b - (uint8_t)tmp_buffer[c + 0];
+                }
+                if (g == tmp_buffer[c + 1])
+                {
+                  matchDelta++;
+                  tmp_buffer_delta[c + 1] = 0x00;
+                }
+                else
+                {
+                  tmp_buffer_delta[c + 1] = (uint8_t) g - (uint8_t)tmp_buffer[c + 1];
+                }
+                if (r == tmp_buffer[c + 2])
+                {
+                  matchDelta++;
+                  tmp_buffer_delta[c + 2] = 0x00;
+                }
+                else
+                {
+                  tmp_buffer_delta[c + 2] = (uint8_t) r - (uint8_t)tmp_buffer[c + 2];
+                }
+              }*/
+              tmp_buffer[c + 0] = b;
+              tmp_buffer[c + 1] = g;
+              tmp_buffer[c + 2] = r;
+              c += 3;
+            }
+            for (int xoff = 0; xoff < offset_xres; xoff++)
+            {
+              /* if (Config::Get(Config::GFX_GROOVY_LZ4_DELTA) && !g_mister.isInterlaced())
+              {
+                matchDelta += 3;
+                tmp_buffer_delta[c + 0] = 0;
+                tmp_buffer_delta[c + 1] = 0;
+                tmp_buffer_delta[c + 2] = 0;
+              }*/
+              tmp_buffer[c + 0] = 0;
+              tmp_buffer[c + 1] = 0;
+              tmp_buffer[c + 2] = 0;
+              c += 3;
+            }            
+            if (mode == Config::GroovyVideoMode::GV_15KHZ_240P && h > 240)
+              y++;              
+          }
+         // g_mister.setMatch(matchDelta);
+          output->Unmap();          
+        }
+      }      
+    }
+                                    
     RenderXFBToScreen(render_target_rc, m_xfb_entry->texture.get(), render_source_rc);
   }
 

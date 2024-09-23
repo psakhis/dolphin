@@ -29,6 +29,9 @@
 #include "VideoCommon/PerformanceMetrics.h"
 #include "VideoCommon/VideoBackendBase.h"
 #include "VideoCommon/VideoConfig.h"
+#include "Common/Config/Config.h"
+#include "Core/Config/GraphicsSettings.h"
+#include <VideoCommon/Mister.h>
 
 namespace CoreTiming
 {
@@ -376,6 +379,10 @@ void CoreTimingManager::Throttle(const s64 target_cycle)
     return;
 
   m_throttle_last_cycle = target_cycle;
+
+  // Sync it's on blit 
+  if (Config::Get(Config::GFX_GROOVY_ENABLE) && g_mister.isConnected())  
+    return;
 
   const double speed = Core::GetIsThrottlerTempDisabled() ? 0.0 : m_emulation_speed;
 

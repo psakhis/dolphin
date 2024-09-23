@@ -34,6 +34,7 @@
 #include "VideoCommon/VideoBackendBase.h"
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/VideoEvents.h"
+#include <VideoCommon/Mister.h>
 
 namespace VideoInterface
 {
@@ -768,7 +769,7 @@ void VideoInterfaceManager::OutputField(FieldType field, u64 ticks)
   u32 fbStride = m_picture_configuration.STD * 16;
   u32 fbWidth = m_picture_configuration.WPL * 16;
   u32 fbHeight = m_vertical_timing_register.ACV;
-
+  
   u32 xfbAddr;
 
   if (field == FieldType::Even)
@@ -818,8 +819,10 @@ void VideoInterfaceManager::OutputField(FieldType field, u64 ticks)
   // Outputting the entire frame using a single set of VI register values isn't accurate, as games
   // can change the register values during scanout. To correctly emulate the scanout process, we
   // would need to collate all changes to the VI registers during scanout.
-  if (xfbAddr)
+  if (xfbAddr)     
     g_video_backend->Video_OutputXFB(xfbAddr, fbWidth, fbStride, fbHeight, ticks);
+  
+    
 }
 
 void VideoInterfaceManager::BeginField(FieldType field, u64 ticks)
@@ -828,6 +831,7 @@ void VideoInterfaceManager::BeginField(FieldType field, u64 ticks)
   // going to change the VI registers while a frame is scanning out.
   if (Config::Get(Config::GFX_HACK_EARLY_XFB_OUTPUT))
     OutputField(field, ticks);
+
 }
 
 void VideoInterfaceManager::EndField(FieldType field, u64 ticks)
@@ -839,9 +843,20 @@ void VideoInterfaceManager::EndField(FieldType field, u64 ticks)
   if (!Config::Get(Config::GFX_HACK_EARLY_XFB_OUTPUT))
     OutputField(field, ticks);
 
+  // Blit on every vblank (not matters if 30/60fps)
+  if (Config::Get(Config::GFX_GROOVY_ENABLE) && g_mister.isConnected())
+  {   
+    bool auto_vsync = Config::Get(Config::GFX_GROOVY_AUTO_VSYNC);
+    int vsync = Config::Get(Config::GFX_GROOVY_VSYNC);
+   // int mister_field = field == FieldType::Odd ? 1 : 0;
+    int mister_field = g_mister.getField();
+    if (Config::Get(Config::GFX_GROOVY_AUDIO))
+      g_mister.BlitAudio();
+    g_mister.Blit(auto_vsync ? 0 : vsync, mister_field);
+  }
   g_perf_metrics.CountVBlank();
   VIEndFieldEvent::Trigger();
-  Core::OnFrameEnd(m_system);
+  Core::OnFrameEnd();
 }
 
 // Purpose: Send VI interrupt when triggered

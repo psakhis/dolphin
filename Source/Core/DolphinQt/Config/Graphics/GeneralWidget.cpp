@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QLineEdit>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QRadioButton>
@@ -27,6 +28,7 @@
 #include "DolphinQt/Config/ToolTipControls/ToolTipComboBox.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
 #include "DolphinQt/QtUtils/SetWindowDecorations.h"
+#include "DolphinQt/QtUtils/SignalBlocking.h"
 #include "DolphinQt/Settings.h"
 
 #include "VideoCommon/VideoBackendBase.h"
@@ -139,9 +141,65 @@ void GeneralWidget::CreateWidgets()
   shader_compilation_layout->addWidget(m_wait_for_shaders);
   shader_compilation_box->setLayout(shader_compilation_layout);
 
+  // Groovy MiSTer
+  auto* groovy_mister_box = new QGroupBox(tr("Groovy MiSTer"));
+  auto* groovy_mister_layout = new QGridLayout();
+
+  m_groovy_enable = new ConfigBool(tr("Enable MiSTer output"), Config::GFX_GROOVY_ENABLE);
+  groovy_mister_layout->addWidget(m_groovy_enable, 0, 0);
+
+  groovy_mister_layout->addWidget(new QLabel(tr("MiSTer ip:")), 1, 0);
+  m_groovy_ip = new QLineEdit();
+  groovy_mister_layout->addWidget(m_groovy_ip, 1, 1);
+  m_groovy_fill_screen = new ConfigBool(tr("Scale contents to fill screen"),
+                                        Config::GFX_GROOVY_SCALE);
+  groovy_mister_layout->addWidget(m_groovy_fill_screen, 2, 0, 1, 2);
+
+  m_groovy_auto_vsync = new ConfigBool(tr("Automatic V-Sync (or choose line to sync)"), Config::GFX_GROOVY_AUTO_VSYNC);
+  groovy_mister_layout->addWidget(m_groovy_auto_vsync, 3, 0);
+  m_groovy_vsync = new ConfigInteger(1, 400, Config::GFX_GROOVY_VSYNC);
+  groovy_mister_layout->addWidget(m_groovy_vsync, 3, 1);
+
+  m_groovy_lz4 = new ConfigBool(tr("LZ4 frames (reduce bandwith vs cpu)"), Config::GFX_GROOVY_LZ4);
+  groovy_mister_layout->addWidget(m_groovy_lz4, 4, 0);
+
+  m_groovy_lz4_delta = new ConfigBool(tr("Delta frames (only send changes vs cpu)"), Config::GFX_GROOVY_LZ4_DELTA);
+  groovy_mister_layout->addWidget(m_groovy_lz4_delta, 4, 1);
+
+
+  m_groovy_jumbo = new ConfigBool(tr("Jumbo frames (MTU 3800)"), Config::GFX_GROOVY_JUMBO);
+  groovy_mister_layout->addWidget(m_groovy_jumbo, 5, 0);
+
+  m_groovy_prog_fb =
+      new ConfigBool(tr("Progressive framebuffer (for scandoubler)"), Config::GFX_GROOVY_PROG_FB);
+  groovy_mister_layout->addWidget(m_groovy_prog_fb, 6, 0);
+
+  m_groovy_audio =
+      new ConfigBool(tr("Send audio"), Config::GFX_GROOVY_AUDIO);
+  groovy_mister_layout->addWidget(m_groovy_audio, 7, 0);
+
+  auto* groovy_video_groupbox = new QGroupBox(tr("TV/Monitor"));
+  auto* groovy_video_vboxlayout = new QVBoxLayout;
+  groovy_video_groupbox->setLayout(groovy_video_vboxlayout);
+
+  m_groovy_15khz = new QRadioButton(tr("ntsc/pal"));
+  m_groovy_15khz_240p = new QRadioButton(tr("ntsc 240p"));
+  m_groovy_ntsc = new QRadioButton(tr("ntsc"));
+  m_groovy_vga = new QRadioButton(tr("vga"));
+
+  groovy_video_vboxlayout->addWidget(m_groovy_15khz);
+  groovy_video_vboxlayout->addWidget(m_groovy_15khz_240p);
+  groovy_video_vboxlayout->addWidget(m_groovy_ntsc);
+  groovy_video_vboxlayout->addWidget(m_groovy_vga);
+   groovy_video_vboxlayout->addStretch();
+  groovy_mister_layout->addWidget(groovy_video_groupbox, 0, 3, 3, 1);
+
+  groovy_mister_box->setLayout(groovy_mister_layout);
+
   main_layout->addWidget(m_video_box);
   main_layout->addWidget(m_options_box);
   main_layout->addWidget(shader_compilation_box);
+  main_layout->addWidget(groovy_mister_box);
   main_layout->addStretch();
 
   setLayout(main_layout);
@@ -149,6 +207,13 @@ void GeneralWidget::CreateWidgets()
 
 void GeneralWidget::ConnectWidgets()
 {
+  // Groovy
+  connect(m_groovy_ip, &QLineEdit::editingFinished, this, &GeneralWidget::SaveSettings);  
+  connect(m_groovy_15khz, &QRadioButton::toggled, this, &GeneralWidget::SaveSettings);
+  connect(m_groovy_15khz_240p, &QRadioButton::toggled, this, &GeneralWidget::SaveSettings);
+  connect(m_groovy_ntsc, &QRadioButton::toggled, this, &GeneralWidget::SaveSettings);
+  connect(m_groovy_vga, &QRadioButton::toggled, this, &GeneralWidget::SaveSettings);
+
   // Video Backend
   connect(m_backend_combo, &QComboBox::currentIndexChanged, this, &GeneralWidget::SaveSettings);
   connect(m_adapter_combo, &QComboBox::currentIndexChanged, this, [&](int index) {
@@ -169,6 +234,18 @@ void GeneralWidget::ConnectWidgets()
 
 void GeneralWidget::LoadSettings()
 {
+  // Groovy
+  SignalBlocking(m_groovy_ip)
+      ->setText(QString::fromStdString(Config::Get(Config::GFX_GROOVY_IP)));
+
+  if (Config::Get(Config::GFX_GROOVY_VIDEO_MODE) == Config::GroovyVideoMode::GV_15KHZ) {
+    SignalBlocking(m_groovy_15khz)->setChecked(true);
+  } else if (Config::Get(Config::GFX_GROOVY_VIDEO_MODE) == Config::GroovyVideoMode::GV_15KHZ_240P) {
+      SignalBlocking(m_groovy_15khz_240p)->setChecked(true);      
+  } else {
+    SignalBlocking(m_groovy_ntsc)->setChecked(true);
+  }
+
   // Video Backend
   m_backend_combo->setCurrentIndex(m_backend_combo->findData(
       QVariant(QString::fromStdString(Config::Get(Config::MAIN_GFX_BACKEND)))));
@@ -185,6 +262,22 @@ void GeneralWidget::LoadSettings()
 
 void GeneralWidget::SaveSettings()
 {
+  // Groovy Mister
+  Config::SetBaseOrCurrent(Config::GFX_GROOVY_IP, m_groovy_ip->text().toStdString());
+
+  if(m_groovy_15khz->isChecked()) {
+    Config::SetBaseOrCurrent(Config::GFX_GROOVY_VIDEO_MODE, Config::GroovyVideoMode::GV_15KHZ);
+  }
+  if(m_groovy_15khz_240p->isChecked()) {
+    Config::SetBaseOrCurrent(Config::GFX_GROOVY_VIDEO_MODE, Config::GroovyVideoMode::GV_15KHZ_240P);
+  }
+  if (m_groovy_ntsc->isChecked()) {
+    Config::SetBaseOrCurrent(Config::GFX_GROOVY_VIDEO_MODE, Config::GroovyVideoMode::GV_NTSC);
+  }
+  if (m_groovy_vga->isChecked()) {
+    Config::SetBaseOrCurrent(Config::GFX_GROOVY_VIDEO_MODE, Config::GroovyVideoMode::GV_VGA);
+  }
+
   // Video Backend
   const auto current_backend = m_backend_combo->currentData().toString().toStdString();
   if (Config::Get(Config::MAIN_GFX_BACKEND) == current_backend)
@@ -229,6 +322,13 @@ void GeneralWidget::OnEmulationStateChanged(bool running)
   std::string current_backend = m_backend_combo->currentData().toString().toStdString();
   if (Config::Get(Config::MAIN_GFX_BACKEND) != current_backend)
     emit BackendChanged(QString::fromStdString(Config::Get(Config::MAIN_GFX_BACKEND)));
+
+  m_groovy_enable->setEnabled(!running);
+  m_groovy_ip->setEnabled(!running);
+  m_groovy_jumbo->setEnabled(!running);
+  m_groovy_lz4->setEnabled(!running);
+  m_groovy_lz4_delta->setEnabled(!running);
+  m_groovy_prog_fb->setEnabled(!running);
 }
 
 void GeneralWidget::AddDescriptions()

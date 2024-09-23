@@ -11,7 +11,18 @@
 namespace Config
 {
 // Configuration Information
-
+const Info<bool> GFX_GROOVY_ENABLE{{System::GFX, "Groovy", "GroovyEnable"}, false};
+const Info<bool> GFX_GROOVY_AUTO_VSYNC{{System::GFX, "Groovy", "AutoVSync"}, false};
+const Info<bool> GFX_GROOVY_SCALE{{System::GFX, "Groovy", "Scale"}, true};
+const Info<int> GFX_GROOVY_VSYNC{{System::GFX, "Groovy", "VSync"}, 100};
+const Info<GroovyVideoMode> GFX_GROOVY_VIDEO_MODE{{System::GFX, "Groovy", "VideoMode"},
+                                                  GroovyVideoMode::GV_15KHZ};
+const Info<std::string> GFX_GROOVY_IP{{System::GFX, "Groovy", "MisterIp"}, "192.168.3.10"};
+const Info<bool> GFX_GROOVY_JUMBO{{System::GFX, "Groovy", "GroovyJumbo"}, false};
+const Info<bool> GFX_GROOVY_LZ4{{System::GFX, "Groovy", "GroovyLZ4"}, true};
+const Info<bool> GFX_GROOVY_LZ4_DELTA{{System::GFX, "Groovy", "GroovyLZ4Delta"}, true};
+const Info<bool> GFX_GROOVY_PROG_FB{{System::GFX, "Groovy", "GroovyProgFB"}, false};
+const Info<bool> GFX_GROOVY_AUDIO{{System::GFX, "Groovy", "GroovyAudio"}, true};
 // Graphics.Hardware
 
 const Info<bool> GFX_VSYNC{{System::GFX, "Hardware", "VSync"}, false};

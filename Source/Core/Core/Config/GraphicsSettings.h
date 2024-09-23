@@ -20,6 +20,24 @@ enum class FrameDumpResolutionType : int;
 namespace Config
 {
 // Configuration Information
+extern const Info<bool> GFX_GROOVY_ENABLE;
+extern const Info<bool> GFX_GROOVY_AUTO_VSYNC;
+extern const Info<bool> GFX_GROOVY_SCALE;
+extern const Info<int> GFX_GROOVY_VSYNC;
+extern const Info<bool> GFX_GROOVY_LZ4;
+extern const Info<bool> GFX_GROOVY_LZ4_DELTA;
+extern const Info<bool> GFX_GROOVY_JUMBO;
+extern const Info<bool> GFX_GROOVY_PROG_FB;
+extern const Info<bool> GFX_GROOVY_AUDIO;
+enum class GroovyVideoMode
+{  
+  GV_15KHZ,
+  GV_15KHZ_240P,
+  GV_NTSC,
+  GV_VGA,
+};
+extern const Info<GroovyVideoMode> GFX_GROOVY_VIDEO_MODE;
+extern const Info<std::string> GFX_GROOVY_IP;
 
 // Graphics.Hardware
 
